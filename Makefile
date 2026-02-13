@@ -181,6 +181,11 @@ UPROGS=\
 	_usertests\
 	_wc\
 	_zombie\
+	_processlist\
+	_setticketstest\
+	_yieldtest\
+	_timewithtickets\
+    _lotterytest\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)

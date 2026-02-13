@@ -1,3 +1,4 @@
+#include "processesinfo.h"
 struct buf;
 struct context;
 struct file;
@@ -9,6 +10,10 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+
+// Lottery scheduler system calls/helpers
+int getprocessesinfo(struct processes_info *p);
+int settickets(int);
 
 // bio.c
 void            binit(void);

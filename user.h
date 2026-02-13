@@ -1,3 +1,4 @@
+#include "processesinfo.h"
 struct stat;
 struct rtcdate;
 
@@ -23,6 +24,10 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int getprocessesinfo(struct processes_info *p);
+int settickets(int);
+int yield(void);
+
 
 // ulib.c
 int stat(const char*, struct stat*);

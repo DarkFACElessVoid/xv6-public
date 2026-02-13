@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "processesinfo.h"
 
 struct {
   struct spinlock lock;
@@ -19,6 +20,17 @@ extern void forkret(void);
 extern void trapret(void);
 
 static void wakeup1(void *chan);
+
+void default_scheduler(void);
+void lottery_scheduler(void);
+
+
+unsigned long cust_randstate = 1;
+unsigned int custom_rand() {
+  cust_randstate = cust_randstate * 1664525 + 1013904223;
+  return (unsigned int)cust_randstate;
+}
+
 
 void
 pinit(void)
@@ -88,6 +100,9 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+
+  p->tickets = 1;
+  p->times_scheduled = 0;
 
   release(&ptable.lock);
 
@@ -174,6 +189,8 @@ growproc(int n)
   return 0;
 }
 
+void scheduler(void) { lottery_scheduler(); }
+
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
@@ -214,12 +231,50 @@ fork(void)
 
   acquire(&ptable.lock);
 
+  np->tickets = curproc->tickets;  
+
+
   np->state = RUNNABLE;
 
   release(&ptable.lock);
 
   return pid;
 }
+
+int getprocessesinfo(struct processes_info *info) {
+  struct proc *p;
+  int i = 0;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == UNUSED)
+      continue;
+
+    info->pids[i] = p->pid;
+    info->tickets[i] = p->tickets;
+    info->times_scheduled[i] = p->times_scheduled;
+    i++;
+  }
+  release(&ptable.lock);
+
+  info->num_processes = i;
+  return 0;
+}
+
+int
+settickets(int num_tickets)
+{
+  struct proc *p = myproc();
+  if(num_tickets <= 0 || num_tickets > 100000)
+    return -1;
+
+  acquire(&ptable.lock);
+  p->tickets = num_tickets;
+  release(&ptable.lock);
+  return 0;
+}
+
+
 
 // Exit the current process.  Does not return.
 // An exited process remains in the zombie state
@@ -319,39 +374,96 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
+
+// The round-robin style scheduler
 void
-scheduler(void)
+default_scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
+
   for(;;){
-    // Enable interrupts on this processor.
+
     sti();
 
-    // Loop over process table looking for process to run.
+
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
 
+      p->times_scheduled++;
+
       swtch(&(c->scheduler), p->context);
       switchkvm();
 
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
+
       c->proc = 0;
     }
     release(&ptable.lock);
 
+  }
+}
+
+void
+lottery_scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  c->proc = 0;
+
+  for(;;){
+    sti();
+    acquire(&ptable.lock);
+
+    int total = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE) continue;
+      int t = p->tickets;
+      if(t < 1) t = 1;
+      total += t;
+    }
+
+    if(total == 0){
+      release(&ptable.lock);
+      continue;
+    }
+
+    int winner = custom_rand() % total;
+
+    int counter = 0;
+    struct proc *chosen = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE) continue;
+      int t = p->tickets;
+      if(t < 1) t = 1;
+
+      counter += t;
+      if(counter > winner){
+        chosen = p;
+        break;
+      }
+    }
+
+    if(chosen){
+      p = chosen;
+      c->proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+      p->times_scheduled++;
+
+      swtch(&(c->scheduler), p->context);
+      switchkvm();
+      c->proc = 0;
+    }
+
+    release(&ptable.lock);
   }
 }
 
